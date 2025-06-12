@@ -1,0 +1,14 @@
+langchain
+langchain-core
+langchain-openai
+langchain-anthropic
+langchain-google-genai
+langchain-community
+huggingface_hub
+ollama
+pydantic
+requests
+pandas
+textual
+sentence-transformers
+parse-llm-code
