@@ -57,7 +57,7 @@ def search_sections(
 
 
 def extract_context(
-        sections: pd.DataFrame, 
+        section: pd.DataFrame, 
         filter: pydantic.BaseModel 
 ):
     """
@@ -67,12 +67,32 @@ def extract_context(
         filter(str, optional): Description of which context the llm should search for.
     """
 
-    return query_model(
+    _, json_output = query_model(
         settings.MODEL, 
         messages=[{
             "role": "user",
-            "content": FILTER_PROMPT_TEMPLATE.format(info=filter.model_json_schema(), section=sections["content"])
+            "content": FILTER_PROMPT_TEMPLATE.format(info=filter.model_json_schema(), section=section["content"])
         }],
-        format=filter,
         parse_json=True
-    )[1]
+    )
+
+    return json_output
+
+
+def filter_and_analyze_sections(
+    sections: pd.DataFrame,
+    filter: pydantic.BaseModel
+):
+    # Apply filter to each section
+    sections['analysis'] = sections.apply(extract_context, axis=1, args=(filter,))
+
+    sections_exploded = sections.explode('analysis')
+    analysis_df = pd.json_normalize(sections_exploded['analysis'])
+
+    # Reset the index of both DataFrames to ensure a clean join
+    sections_exploded.reset_index(drop=True, inplace=True)
+    analysis_df.reset_index(drop=True, inplace=True)
+
+    # Concatenate the original data (minus the unneeded columns) with the new analysis data
+    return pd.concat([sections_exploded.drop(columns=['analysis']), analysis_df], axis=1)
+

@@ -9,6 +9,6 @@ ollama
 pydantic
 requests
 pandas
-textual
 sentence-transformers
 parse-llm-code
+datasets

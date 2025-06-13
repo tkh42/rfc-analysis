@@ -1,123 +1,169 @@
 import re
 import requests
 import pandas as pd
-from sentence_transformers import SentenceTransformer, util
+
 
 def parse_rfc_header(text):
-    header_text = text.split("\n\n", 1)[0]
+    header_text = text.split("\n\n", 1)[0]  # Get the header part
     lines = header_text.strip().splitlines()
     
     rfc_info = {
-        "group": None, "rfc_number": None, "obsoletes": [],
-        "updates": [], "category": None, "date": None, "authors": [],
+        "group": None,
+        "rfc_number": None,
+        "obsoletes": [],
+        "updates": [],
+        "category": None,
+        "date": None,
+        "authors": [],  # List of (name, affiliation)
     }
 
     for line in lines:
-        parts = re.split(r"\s{2,}", line.strip(), 1)
-        left = parts[0]
-        right = parts[1] if len(parts) > 1 else ""
+        # Split line into two columns based on position
+        left, right = re.split(r"\s{2,}", line, 1)[0:2] if "  " in line else (line.strip(), "")
 
+        # Parse left side
         if left.startswith("Request for Comments:"):
-            rfc_info["rfc_number"] = int(re.search(r'\d+', left).group())
+            rfc_info["rfc_number"] = int(left.split(":")[1].strip())
         elif left.startswith("Obsoletes:"):
-            rfc_info["obsoletes"] = [int(x) for x in re.findall(r'\d+', left)]
+            rfc_info["obsoletes"] = [
+                int(x.strip()) for x in left.split(":")[1].split(",") if x.strip().isdigit()
+            ]
         elif left.startswith("Updates:"):
-            rfc_info["updates"] = [int(x) for x in re.findall(r'\d+', left)]
-        elif left.startswith("Published:") or left.startswith("Date:"):
-             rfc_info["date"] = left.split(":", 1)[1].strip()
+            rfc_info["updates"] = [
+                int(x.strip()) for x in left.split(":")[1].split(",") if x.strip().isdigit()
+            ]
+        elif left.startswith("Published"):
+            rfc_info["date"] = left.split(":")[1].strip()
         elif left.startswith("Category:"):
-            rfc_info["category"] = left.split(":", 1)[1].strip()
+            rfc_info["category"] = left.split(":")[1].strip()
         elif left.startswith("ISSN:"):
-            rfc_info["issn"] = left.split(":", 1)[1].strip()
-        elif not any(key in left for key in ["Request for Comments", "Obsoletes", "Updates", "Published", "Category", "ISSN"]):
+            rfc_info["issn"] = left.split(":")[1].strip()
+        else:
             if left.strip():
                 rfc_info["group"] = left.strip()
 
-        if right and not re.match(r'^[A-Za-z]+\s+\d{4}$', right):
-            rfc_info["authors"].append(right)
-        elif right and re.match(r'^[A-Za-z]+\s+\d{4}$', right):
-             rfc_info["date"] = right
+        # Collect right column lines (authors + affiliations)
+        if right:
+            # Detect date as the last line if it looks like "Month Year"
+            if re.match(r'^[A-Za-z]+\s+\d{4}$', right):
+                rfc_info["date"] = right
+            else:
+                rfc_info["authors"].append(right)
 
     return rfc_info
 
 
 def clean_up_rfc_text(text):
-    text = re.sub(r'.*\f.*', '', text) # Remove form feeds and lines containing them
-    text = re.sub(r'RFC \d+.*[A-Za-z]+\s+\d{4}\n', '', text) # Remove headers
-    text = re.sub(r'\[Page \d+\]', '', text) # Remove page markers
-    return text.strip()
+    result = ""
+    lines = text.splitlines()
+    last_line_was_empty = False
+
+
+    for line in lines:
+        # Skip empty lines
+        if not line.strip():
+            if last_line_was_empty:
+                continue
+            last_line_was_empty = True
+            result += "\n"
+            continue
+        else:
+            last_line_was_empty = False
+            
+        if re.search(r"\[Page \d+\]", line):
+            continue
+
+        if re.search(r"^RFC \d{4}", line) and re.search(r"January|February|March|April|May|June|July|August|September|October|November|December", line):
+            continue
+        
+        result += line + "\n"
+        
+    return result
 
 
 def extract_sections(text):
-    # Regex to find section numbers and titles, accommodating multi-line titles
-    pattern = re.compile(r"^\s*(\d+(\.\d+)*)\.?\s+([A-Z][^\n]*(\n(?!\s*\d+\.\d+\s)[^\n]*)*)", re.MULTILINE)
-    
-    titles = [(match.group(1), re.sub(r'\s+', ' ', match.group(3).strip())) for match in pattern.finditer(text)]
-    
-    sections = []
-    for i, (number, title) in enumerate(titles):
-        start_pos = re.search(re.escape(title), text).end()
-        
-        end_pos = None
-        if i + 1 < len(titles):
-            next_number, next_title = titles[i+1]
-            # Search for the next title's start
-            end_match = re.search(r"^\s*" + re.escape(next_number) + r"\.?\s+" + re.escape(next_title), text[start_pos:], re.MULTILINE)
-            if end_match:
-                end_pos = start_pos + end_match.start()
+    section_titles = []
+    try:
+        parts = re.split(r"1.\s*Introduction\s+\n", text)
+        pre = parts[0]
+        post = "1. Introduction\n" + "1. Introduction\n".join(parts[1:])
+        table_of_contents = pre.split("Table of Contents")[1]
 
-        content = text[start_pos:end_pos].strip()
+        for row in re.split(r"\d+\n", table_of_contents):
+            if match := re.search(r"(\d+\.(?:\d+\.)*)\s+(.*?)(?=(?:\s*\d+\.)?\.\s*)*$)", row, re.DOTALL):
+                number = match.group(1)
+                title = re.sub(r"\s+", " ", re.split(r"\s*\.*$", match.group(2))[0]).strip()
+                section_titles.append((number, title))
+    except Exception as e:
+        section_titles = re.findall(r"\n(\d+\.(?:\d+\.)*)\s+(.*)\n", text)
+
+    sections = []
+    for idx, (number, title) in enumerate(section_titles):
+        pattern = re.escape(number) + r'\s*' + r'[\s\r\n]*'.join(re.escape(char) for char in title if char not in ["\n", "\r"])  # Allow spaces between characters
+        try:
+            content = re.split(pattern, post)[1]
+        except Exception:
+            try:
+                alternative_pattern = r'\s*' + r'[\s\r\n]*'.join(re.escape(char) for char in title if char not in ["\n", "\r"])  
+                content = re.split(alternative_pattern, post)[1]
+            except Exception:
+                continue
+        if idx < len(section_titles) - 1:
+            pattern = re.escape(section_titles[idx + 1][0]) + r'\s*' + r'[\s\r\n]*'.join(re.escape(char) for char in section_titles[idx + 1][1] if char not in ["\n", "\r"])
+            content = re.split(pattern, content)[0]
         sections.append({
-            "number": number, "title": title, "content": content,
-            "word_count": len(content.split())
+            "number": number, 
+            "title": title, 
+            "content": content, 
+            "word_count": len(re.split(r"\s+", content))
         })
+
     return sections
 
 
 def setup_rfc_datasets(rfc_ids):
-    rfc_data, section_data = [], []
-    for rfc in rfc_ids:
-        try:
-            response = requests.get(f"https://www.ietf.org/rfc/rfc{rfc}.txt")
-            response.raise_for_status()
-            text = response.text
-        except requests.RequestException as e:
-            print(f"Failed to download RFC {rfc}: {e}")
-            continue
+    rfc_data = []
+    section_data = []
 
-        header_info = parse_rfc_header(text)
+    for rfc in rfc_ids:
+        # Download RFC text
+        text = requests.get(f"https://www.ietf.org/rfc/rfc{rfc}.txt").text
+        # Remove Page Numbers etc. and split sections
         text = clean_up_rfc_text(text)
-        header_info.update({"rfc_number": rfc, "text": text})
+        # Parse RFC header to extract obsoletes/updates etc.
+        header_info = parse_rfc_header(text)
+        header_info["rfc_number"] = rfc
+        header_info["text"] = text
+
         rfc_data.append(header_info)
 
-        for section in extract_sections(text):
-            section.update({"rfc": rfc, "updated_by": [], "obsoleted_by": []})
+        # Split text into sections
+        sections = extract_sections(text)
+        
+        for section in sections:
+            section["rfc"] = rfc
+            section["updated_by"] = []
+            section["obsoleted_by"] = []
             section_data.append(section)
-
-    if not section_data:
-        return pd.DataFrame(), pd.DataFrame()
 
     rfc_df = pd.DataFrame(rfc_data)
     section_df = pd.DataFrame(section_data)
-    
-    # Use a semantic model to find relationships
-    model = SentenceTransformer('all-MiniLM-L6-v2')
 
     for _, rfc_info in rfc_df.iterrows():
-        for updated_rfc in rfc_info["updates"]:
-            old_df = section_df[section_df.rfc == updated_rfc]
-            new_df = section_df[section_df.rfc == rfc_info["rfc_number"]]
-            if old_df.empty or new_df.empty: continue
-            
-            old_embeddings = model.encode(old_df['content'].tolist(), convert_to_tensor=True)
-            new_embeddings = model.encode(new_df['content'].tolist(), convert_to_tensor=True)
-            
-            cos_scores = util.cos_sim(old_embeddings, new_embeddings)
-            for i in range(len(old_df)):
-                best_match_idx = cos_scores[i].argmax().item()
-                if cos_scores[i, best_match_idx] > 0.6: # Similarity threshold
-                    old_section_idx = old_df.index[i]
-                    new_section_num = new_df.iloc[best_match_idx]['number']
-                    section_df.loc[old_section_idx, "updated_by"].append((rfc_info["rfc_number"], new_section_num))
+        # Identify updated and obsoleted sections
+        for updated in rfc_info["updates"]:
+            old_sections = section_df[section_df.rfc == updated]
+            for idx, old_section in old_sections.iterrows():
+                for _, potential_new_section in section_df[section_df.rfc == rfc_info["rfc_number"]].iterrows():
+                    if old_section["number"] in potential_new_section["title"] or old_section["number"] in potential_new_section["content"]:
+                        # Mark as updated.
+                        section_df.loc[idx, "updated_by"].append((rfc_info["rfc_number"], potential_new_section["number"]))                        
+
+        for obsoleted in rfc_info["obsoletes"]:
+            old_sections = section_df[section_df.rfc == obsoleted]
+            for idx, old_section in old_sections.iterrows():
+                for _, potential_new_section in section_df[section_df.rfc == rfc_info["rfc_number"]].iterrows():
+                    if old_section["title"] == potential_new_section["title"]:
+                        section_df.loc[idx, "obsoleted_by"].append((rfc_info["rfc_number"], potential_new_section["number"]))
 
     return rfc_df, section_df

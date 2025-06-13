@@ -28,26 +28,6 @@ Edit `settings.py`:
   * For remote models (Anthropic, Google, OpenAI), use `setup_llm()` from `ai.py` (based on [LangChain](https://github.com/langchain-ai/langchain)).
   * For local models (e.g., via Ollama), provide the model name as a string (e.g., `"llama3"`). See [Ollama Setup](#) for more details.
 
-### 4. Specify RFCs to Analyze
-
-* Edit `settings.py` and assign a list of RFC numbers to `RFCs`, or provide a single RFC interactively via the tool.
-
-### 5. Define Templates
-
-* `templates.py` contains keyword lists, regex patterns, and descriptions for common analysis tasks (e.g., RPKI-related RFCs).
-* Extend it with new entries in the same format to support other RFC topics.
-
----
-
-## ▶️ Usage
-
-Run the tool:
-
-```bash
-python main.py
-```
-
----
 
 ## 🔍 Functionality
 
@@ -64,7 +44,7 @@ Search for RFC sections using:
 * **LLM-Based Descriptions**
   Provide a natural language description (e.g., "Sections containing ASN.1 definitions")—the LLM determines which sections match.
 
-> 🧠 Examples of search queries are available in `templates.py`. You can also define new ones interactively.
+> 🧠 Examples of search queries are available in `templates.py`.
 
 ---
 
@@ -73,7 +53,7 @@ Search for RFC sections using:
 Combine search with **LLM-based filtering** for structured analysis.
 
 * Define filter templates in `templates.py` using `pydantic.BaseModel`.
-* The LLM attempts to extract the specified information from the section; if the relevant data is missing, the section is excluded.
+* The LLM attempts to extract the specified information from the section; if the relevant data is missing, the section is filtered out, the other sections will be returned with the structured LLM output as additional information.
 
 **Example: Filtering for Availability Requirements**
 
@@ -82,46 +62,7 @@ class AvailabilityRequirement(BaseModel):
     requirement: Annotated[str, Field(description="Requirement on the availability of a service: bit rates, timeouts, general expectations, error codes")]
 ```
 
-🔎 Sections mentioning availability are processed by the LLM. If availability requirements are found, they are extracted and highlighted.
-
----
-
-### 📖 RFC Reader
-
-A visual interface to:
-
-* Navigate RFC sections
-* Highlight references (with clickable navigation)
-* View updated/obsoleted sections and perform inline diffs
-* Annotate sections and save analysis state
-* Highlight LLM-relevant content when used with filters
-
----
-
-## 📸 Screenshots
-
-<details>
-<summary>Click to expand</summary>
-
-### Section Search UI
-
-```markdown
-![Section Search](screenshots/section_search.png)
-```
-
-### Semantic Filtering Result
-
-```markdown
-![Filtered Results](screenshots/semantic_filter.png)
-```
-
-### RFC Reader with Annotations
-
-```markdown
-![RFC Reader](screenshots/rfc_reader.png)
-```
-
-</details>
+🔎 Sections mentioning availability are processed by the LLM. If availability requirements are found, they are extracted.
 
 ---
 
