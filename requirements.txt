@@ -1,3 +1,4 @@
+faiss-gpu
 langchain
 langchain-core
 langchain-openai

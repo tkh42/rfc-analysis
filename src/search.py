@@ -9,12 +9,12 @@ from .index import HFSTIndex
 
 def search_sections(
         sections: pd.DataFrame,
-        keyword: List[str] = [],
+        keywords: List[str] = [],
         regex: str = "",
         search_query: str = "",
         use_llm: bool = False, 
         num_sections: int = 10,
-        similarity_threshold: float = 0.0
+        similarity_threshold: float = 100.0
 ):
     """ 
     Search for sections in RFCs.
@@ -29,10 +29,14 @@ def search_sections(
         similarity_threshold(float, optional): Threshold for semantic similarity used to filter sections
     """
 
-    if keyword:
-        return pd.concat([sections, sections[sections["content"].str.contains(keyword, na=False)]], ignore_index=True)
+    if keywords:
+        result = pd.DataFrame()
+        for keyword in keywords:
+            result = pd.concat([result, sections[sections["content"].str.contains(keyword, na=False)]], ignore_index=True)
+
+        return result
     if regex:
-        return pd.concat([sections, sections[sections["content"].str.contains(regex, na=False)]], ignore_index=True)
+        return sections[sections["content"].str.contains(regex, na=False)]
     
     if search_query and use_llm:
             selected_sections = []
@@ -43,15 +47,22 @@ def search_sections(
                     messages=[{
                         "role": "user",
                         "content": SEARCH_PROMPT_TEMPLATE.format(description=search_query, section=section["content"])
-                    }])
-                if "YES" in response: selected_sections.append(idx)
+                    }],
+                    options={
+                        "num_ctx": 100000
+                    })
+                
+                if "YES" in response.content: selected_sections.append(idx)
                     
-            return sections[selected_sections]
+            return sections.loc[selected_sections]
     elif search_query:
-        index = HFSTIndex(sections, index_src_col="content")
+        index = HFSTIndex(sections, index_src_col="content", overwrite_existing=True)
         results, scores = index.semantic_search(search_query, k=num_sections)
+        results = pd.DataFrame(results[0])
+        scores = pd.DataFrame(scores[0], columns=["score"])
 
-        return 
+        joined = pd.concat([results, scores], axis=1)
+        return joined[joined.score < similarity_threshold]
     else:
         return pd.DataFrame()
 
@@ -87,6 +98,7 @@ def filter_and_analyze_sections(
     sections['analysis'] = sections.apply(extract_context, axis=1, args=(filter,))
 
     sections_exploded = sections.explode('analysis')
+    sections_exploded = sections.dropna(subset=["analysis"])
     analysis_df = pd.json_normalize(sections_exploded['analysis'])
 
     # Reset the index of both DataFrames to ensure a clean join
